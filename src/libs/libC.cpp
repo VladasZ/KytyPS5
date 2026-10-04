@@ -34,6 +34,10 @@ namespace LibKernel {
 void KernelDispatchPendingSignalForCurrentThread();
 } // namespace LibKernel
 
+namespace LibcHost {
+LIB_DEFINE(InitLibcHost_1);
+} // namespace LibcHost
+
 namespace LibC {
 
 LIB_VERSION("libc", 1, "libc", 1, 1);
@@ -636,7 +640,10 @@ static KYTY_SYSV_ABI int snprintf(VA_ARGS) {
 int KYTY_SYSV_ABI fflush(FILE* stream) {
 	PRINT_NAME();
 
-	EXIT_NOT_IMPLEMENTED(stream != stdout);
+	// Any other stream is a guest FILE the host libc must not touch.
+	if (stream != nullptr && stream != stdout) {
+		return 0;
+	}
 
 	return ::fflush(stream);
 }
@@ -812,6 +819,9 @@ namespace LibC {
 
 LIB_DEFINE(InitLibC_1) {
 	LibcInternal::InitLibcInternal_1(s);
+#if !defined(_WIN32)
+	LibcHost::InitLibcHost_1(s);
+#endif
 
 	LIB_OBJECT("P330P3dFF68", &LibC::g_need_flag);
 

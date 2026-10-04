@@ -1242,7 +1242,7 @@ static KYTY_SYSV_ABI KernelModule KernelLoadStartModule(const char* module_file_
 	rt->RelocateProgram(program);
 
 	program->load_count = 1;
-	int result = rt->StartModule(program, args, argp, nullptr);
+	int result          = rt->StartModule(program, args, argp, nullptr);
 
 	LOGF("\tmodule_start() result = %d\n", result);
 
@@ -1394,6 +1394,32 @@ static int64_t KYTY_SYSV_ABI write(int d, const char* str, int64_t size) {
 	int size_int = static_cast<int>(size);
 
 	return size_int;
+}
+
+static int KYTY_SYSV_ABI pipe(int* fds) {
+	PRINT_NAME();
+
+	if (fds != nullptr) {
+		fds[0] = -1;
+		fds[1] = -1;
+	}
+	*Posix::GetErrorAddr() = Posix::POSIX_EMFILE;
+	return -1;
+}
+
+static int KYTY_SYSV_ABI KernelSendNotificationRequest(int /*device*/, const char* request,
+                                                       uint64_t size, int /*blocking*/) {
+	PRINT_NAME();
+
+	// The message text follows eleven ints and one flag byte in the request.
+	constexpr uint64_t message_offset = 45;
+	if (request != nullptr && size > message_offset) {
+		const std::string_view tail(request + message_offset, size - message_offset);
+		const auto             message = tail.substr(0, tail.find('\0'));
+		printf("Notification: %.*s\n", static_cast<int>(message.size()), message.data());
+	}
+
+	return 0;
 }
 
 static int KYTY_SYSV_ABI open(const char* path, int flags, int mode) {
@@ -2120,8 +2146,8 @@ int KYTY_SYSV_ABI KernelSyncOnAddressWake(volatile void* address, int32_t count)
 	return LibKernel::SyncOnAddress::Wake(address, count);
 }
 
-int KYTY_SYSV_ABI UmtxOp(volatile void* address, int operation, uint64_t value,
-                           void* uaddr, const void* timeout) {
+int KYTY_SYSV_ABI UmtxOp(volatile void* address, int operation, uint64_t value, void* uaddr,
+                         const void* timeout) {
 	constexpr int UMTX_OP_WAIT = 2;
 	constexpr int UMTX_OP_WAKE = 3;
 
@@ -2136,12 +2162,13 @@ int KYTY_SYSV_ABI UmtxOp(volatile void* address, int operation, uint64_t value,
 					*GetErrorAddr() = POSIX_EINVAL;
 					return -1;
 				}
-				const auto max_ns = std::chrono::nanoseconds::max().count();
+				const auto max_ns     = std::chrono::nanoseconds::max().count();
 				const auto timeout_ns = duration.tv_sec > (max_ns - duration.tv_nsec) / 1000000000
 				                            ? max_ns
 				                            : duration.tv_sec * 1000000000 + duration.tv_nsec;
 				return POSIX_CALL(LibKernel::SyncOnAddress::Wait64(
-				    static_cast<volatile uint64_t*>(address), value, std::chrono::nanoseconds(timeout_ns),
+				    static_cast<volatile uint64_t*>(address), value,
+				    std::chrono::nanoseconds(timeout_ns),
 				    LibKernel::KernelDispatchPendingSignalForCurrentThread));
 			}
 			return POSIX_CALL(LibKernel::SyncOnAddress::Wait64(
@@ -2418,10 +2445,10 @@ static void FiberStoreState(FiberObject* fiber, uint32_t state) {
 }
 
 static void FiberCompleteSwitch(FiberObject* current) {
-	auto* context = FiberGetThreadContext();
+	auto* context          = FiberGetThreadContext();
 	context->current_fiber = current;
 	// Only publish IDLE after switching away from the departing fiber's stack.
-	auto* fiber = context->pending_idle_fiber;
+	auto* fiber                 = context->pending_idle_fiber;
 	context->pending_idle_fiber = nullptr;
 	if (fiber != nullptr) {
 		FiberStoreState(fiber, FIBER_STATE_IDLE);
@@ -2512,10 +2539,10 @@ static void FiberRestoreContext(FiberCpuContext* ctx, uint64_t ret) {
 
 	FiberStoreState(fiber, FIBER_STATE_TERMINATED);
 	FiberSetContextValid(fiber, false);
-	fiber->arg_on_return  = 0;
-	auto* context = FiberGetThreadContext();
+	fiber->arg_on_return    = 0;
+	auto* context           = FiberGetThreadContext();
 	context->returned_fiber = fiber;
-	context->current_fiber = nullptr;
+	context->current_fiber  = nullptr;
 
 	FiberRestoreContext(&context->cpu_context, 1);
 }
@@ -2647,7 +2674,7 @@ int32_t KYTY_SYSV_ABI FiberRun(FiberObject* fiber, uint64_t arg_on_run, uint64_t
 		FiberStartOnGuestStack(fiber);
 	}
 
-	auto* returned_fiber  = (context.returned_fiber != nullptr ? context.returned_fiber : fiber);
+	auto* returned_fiber    = (context.returned_fiber != nullptr ? context.returned_fiber : fiber);
 	const auto return_value = returned_fiber->arg_on_return;
 	const auto return_code =
 	    FiberLoadState(returned_fiber) == FIBER_STATE_TERMINATED ? FIBER_ERROR_STATE : OK;
@@ -2709,7 +2736,7 @@ int32_t KYTY_SYSV_ABI FiberGetSelf(FiberObject** fiber) {
 	}
 
 	const auto* context = FiberGetThreadContext();
-	*fiber = context != nullptr ? context->current_fiber : nullptr;
+	*fiber              = context != nullptr ? context->current_fiber : nullptr;
 
 	return OK;
 }
@@ -2727,7 +2754,7 @@ int32_t KYTY_SYSV_ABI FiberReturnToThread(uint64_t arg_on_return, uint64_t* arg_
 
 	if (FiberSaveContext(&fiber->saved_context) == 0) {
 		FiberSetContextValid(fiber, true);
-		context->returned_fiber = fiber;
+		context->returned_fiber     = fiber;
 		context->pending_idle_fiber = fiber;
 		FiberRestoreContext(&context->cpu_context, 1);
 	}
@@ -2947,8 +2974,8 @@ int KYTY_SYSV_ABI KernelAioPollRequest(int32_t id, int32_t* state) {
 
 	auto current = g_kernel_aio_state[id].load(std::memory_order_acquire);
 	while (current == KERNEL_AIO_STATE_COMPLETED || current == KERNEL_AIO_STATE_ABORTED) {
-		if (g_kernel_aio_state[id].compare_exchange_weak(current, current | KERNEL_AIO_STATE_NOTIFIED,
-		                                                std::memory_order_acq_rel)) {
+		if (g_kernel_aio_state[id].compare_exchange_weak(
+		        current, current | KERNEL_AIO_STATE_NOTIFIED, std::memory_order_acq_rel)) {
 			break;
 		}
 	}
@@ -3308,6 +3335,8 @@ LIB_DEFINE(InitLibKernel_1_Pthread) {
 	LIB_FUNC("VAzswvTOCzI", FileSystem::KernelUnlink);
 	LIB_FUNC("JGMio+21L4c", Posix::mkdir);
 	LIB_FUNC("wuCroIGjt2g", FileSystem::KernelOpen);
+	LIB_FUNC("-Jp7F+pXxNg", LibKernel::pipe);
+	LIB_FUNC("zl7hupSO0C0", LibKernel::KernelSendNotificationRequest);
 	LIB_FUNC("bY-PO6JhzhQ", FileSystem::KernelClose);
 	LIB_FUNC("FN4gaPmuFV8", FileSystem::KernelWrite);
 }
